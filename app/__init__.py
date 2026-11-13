@@ -1,0 +1,1 @@
+"""SPHEREx Flipbook API package."""

@@ -1,0 +1,7 @@
+[
+  {"name": "WISE 0855", "ok": true, "source": "real", "n_frames": 10},
+  {"name": "Barnard's Star", "ok": true, "source": "real", "n_frames": 11},
+  {"name": "Epsilon Indi", "ok": true, "source": "real", "n_frames": 10},
+  {"name": "RW Aurigae", "ok": true, "source": "real", "n_frames": 12},
+  {"name": "R Draconis", "ok": true, "source": "real", "n_frames": 8}
+]

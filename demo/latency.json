@@ -1,0 +1,5 @@
+{
+  "median_seconds": 17.97,
+  "decision": "async",
+  "note": "Median > 10s → use /api/prepare job queue + /api/job/{id} poll. Individual /api/frame stays sync with disk cache for replays."
+}

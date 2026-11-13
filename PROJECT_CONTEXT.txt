@@ -1,0 +1,3 @@
+SPHEREx Flipbook — NASA Space Apps 2026
+Viewer for human discovery. Live IRSA cutouts. Collapse 102-band cubes server-side.
+Release constant: app/config.py RELEASE. Do not use QR1/QR2.

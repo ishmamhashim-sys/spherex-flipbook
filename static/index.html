@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SPHEREx Flipbook</title>
+  <link rel="stylesheet" href="https://aladin.cds.unistra.fr/AladinLite/api/v3/latest/aladin.min.css" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <h1>SPHEREx Flipbook</h1>
+      <p class="tag">Blink real SPHEREx cutouts · human discovery · NASA Space Apps 2026</p>
+    </div>
+    <div class="badge" id="sourceBadge">loading…</div>
+  </header>
+
+  <section class="controls">
+    <label>Name <input id="name" placeholder="WISE 0855" /></label>
+    <button id="resolve" type="button">Resolve</button>
+    <label>RA <input id="ra" value="133.795" /></label>
+    <label>Dec <input id="dec" value="-7.245" /></label>
+    <label>FOV° <input id="fov" value="0.1" /></label>
+    <label>Band
+      <select id="band">
+        <option value="all">broadband sum</option>
+        <option value="SPHEREx-D1">D1</option>
+        <option value="SPHEREx-D2">D2</option>
+        <option value="SPHEREx-D3">D3</option>
+        <option value="SPHEREx-D4">D4</option>
+        <option value="SPHEREx-D5">D5</option>
+        <option value="SPHEREx-D6">D6</option>
+      </select>
+    </label>
+    <label>Mode
+      <select id="mode">
+        <option value="sum">nansum</option>
+        <option value="median">median</option>
+        <option value="detector">per-detector stack</option>
+      </select>
+    </label>
+    <button id="go" type="button">Load</button>
+    <button id="play" type="button">Pause</button>
+    <label>Speed <input id="speed" type="range" min="80" max="1500" value="450" /></label>
+    <label>Stretch a <input id="stretch" type="range" min="1" max="100" value="10" /></label>
+    <label><input id="gaia" type="checkbox" /> Gaia DR3</label>
+    <label><input id="wise" type="checkbox" /> WISE context</label>
+    <label><input id="diffMode" type="checkbox" /> Diff A−B</label>
+    <button id="gif" type="button">Export GIF</button>
+    <select id="preset"></select>
+  </section>
+
+  <main class="layout">
+    <div class="panel map-panel">
+      <div id="aladin-lite-div"></div>
+      <div class="panel-label">Sky context (Aladin Lite)</div>
+    </div>
+    <div class="panel blink-panel" id="blinkPanel">
+      <img id="view" alt="SPHEREx blink frame" />
+      <div class="epoch-legend" id="legend"></div>
+      <div id="info"></div>
+      <div id="meta"></div>
+    </div>
+  </main>
+
+  <footer>
+    Data via IRSA · Inspired by WiseView / Backyard Worlds · Cubes collapsed server-side · Cache = PNG thumbnails only
+  </footer>
+
+  <script src="https://aladin.cds.unistra.fr/AladinLite/api/v3/latest/aladin.js" charset="utf-8"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
