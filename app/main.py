@@ -20,6 +20,7 @@ from app.config import (
     ROOT,
     USE_ASYNC_JOBS,
 )
+from app import anomaly as anom
 from app import fake as fake_mod
 from app import irsa
 from app import jobs as jobmod
@@ -201,24 +202,40 @@ def _get_epoch(ra, dec, fov, release, band, obs_id) -> dict[str, Any]:
     raise HTTPException(404, f"Unknown obs_id {obs_id}")
 
 
-@app.get("/api/frame/{obs_id}")
-def frame(
+def _fits_for_epoch(epoch: dict[str, Any], ra: float, dec: float, fov: float) -> bytes:
+    """Download (or reuse cached) FITS cutout bytes for an epoch dict."""
+    obs_id = str(epoch.get("id", ""))
+    fits_key = f"{obs_id}:{ra:.5f}:{dec:.5f}:{fov:.4f}"
+    if fits_key in _FITS_CACHE:
+        return _FITS_CACHE[fits_key]
+    url = irsa.cutout_url(epoch, ra, dec, fov)
+    log.info("Downloading cutout %s", url[:120])
+    data = irsa.download_fits(url)
+    _FITS_CACHE[fits_key] = data
+    return data
+
+
+def _render_frame_png(
     obs_id: str,
-    ra: float = Query(DEFAULT_RA),
-    dec: float = Query(DEFAULT_DEC),
-    fov: float = Query(DEFAULT_FOV, gt=0, le=2.0),
-    release: str = Query(None),
-    band: str = Query("all"),
-    mode: str = Query("sum"),
-    a: float = Query(0.1, gt=0, le=10),
-    invert: int = Query(1),
-    align: int = Query(1),
-    source: str = Query("auto"),
-):
-    """Return a single PNG for one epoch (cached on disk)."""
+    *,
+    ra: float = DEFAULT_RA,
+    dec: float = DEFAULT_DEC,
+    fov: float = DEFAULT_FOV,
+    release: str | None = None,
+    band: str = "all",
+    mode: str = "sum",
+    a: float = 0.1,
+    invert: int = 1,
+    align: int = 1,
+    source: str = "auto",
+) -> Response:
+    """Build one epoch PNG. Plain Python defaults — safe for internal callers."""
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     rel = release or RELEASE
-    key = proc.cache_key(ra, dec, fov, obs_id, rel, mode=f"{mode}_a{a}_i{invert}_al{align}")
+    stretch = float(a)
+    key = proc.cache_key(
+        ra, dec, fov, obs_id, rel, mode=f"{mode}_a{stretch}_i{invert}_al{align}"
+    )
     path = proc.cache_path(key)
     if path.exists():
         return Response(path.read_bytes(), media_type="image/png")
@@ -249,12 +266,7 @@ def frame(
         return Response(png, media_type="image/png")
 
     try:
-        url = irsa.cutout_url(epoch, ra, dec, fov)
-        fits_key = f"{obs_id}:{ra:.5f}:{dec:.5f}:{fov:.4f}"
-        if fits_key not in _FITS_CACHE:
-            log.info("Downloading cutout %s", url[:120])
-            _FITS_CACHE[fits_key] = irsa.download_fits(url)
-        fits_bytes = _FITS_CACHE[fits_key]
+        fits_bytes = _fits_for_epoch(epoch, ra, dec, fov)
 
         ref_header = None
         if align:
@@ -268,7 +280,7 @@ def frame(
         png, meta = proc.process_fits_to_png(
             fits_bytes,
             mode=mode,
-            a=a,
+            a=stretch,
             invert=bool(invert),
             ref_header=ref_header,
         )
@@ -287,6 +299,36 @@ def frame(
         )
 
 
+@app.get("/api/frame/{obs_id}")
+def frame(
+    obs_id: str,
+    ra: float = Query(DEFAULT_RA),
+    dec: float = Query(DEFAULT_DEC),
+    fov: float = Query(DEFAULT_FOV, gt=0, le=2.0),
+    release: str = Query(None),
+    band: str = Query("all"),
+    mode: str = Query("sum"),
+    a: float = Query(0.1, gt=0, le=10),
+    invert: int = Query(1),
+    align: int = Query(1),
+    source: str = Query("auto"),
+):
+    """Return a single PNG for one epoch (cached on disk)."""
+    return _render_frame_png(
+        obs_id,
+        ra=ra,
+        dec=dec,
+        fov=fov,
+        release=release,
+        band=band,
+        mode=mode,
+        a=a,
+        invert=invert,
+        align=align,
+        source=source,
+    )
+
+
 @app.get("/api/meta/{obs_id}")
 def meta(
     obs_id: str,
@@ -296,14 +338,20 @@ def meta(
     release: str = Query(None),
     band: str = Query("all"),
     mode: str = Query("sum"),
+    a: float = Query(0.1),
 ):
     """Return processing metadata including FLAGS summary and spectrum if available."""
     rel = release or RELEASE
-    key = proc.cache_key(ra, dec, fov, obs_id, rel, mode=mode)
+    stretch = float(a)
+    key = proc.cache_key(
+        ra, dec, fov, obs_id, rel, mode=f"{mode}_a{stretch}_i1_al1"
+    )
     if key in _META_CACHE:
         return _META_CACHE[key]
-    # Trigger frame build
-    frame(obs_id=obs_id, ra=ra, dec=dec, fov=fov, release=rel, band=band, mode=mode)
+    # Trigger frame build via internal helper (plain defaults — no Query leak)
+    _render_frame_png(
+        obs_id, ra=ra, dec=dec, fov=fov, release=rel, band=band, mode=mode, a=stretch
+    )
     return _META_CACHE.get(key, {})
 
 
@@ -316,21 +364,80 @@ def diff(
     fov: float = Query(DEFAULT_FOV),
     release: str = Query(None),
     band: str = Query("all"),
+    mode: str = Query("sum"),
     a: float = Query(0.1),
 ):
-    """Difference imaging: epoch A minus epoch B."""
+    """Difference imaging PNG: epoch A minus epoch B (ZODI + smart FLAGS + WCS)."""
     rel = release or RELEASE
     ea = _get_epoch(ra, dec, fov, rel, band, id_a)
     eb = _get_epoch(ra, dec, fov, rel, band, id_b)
     if ea.get("band") == "fake" or eb.get("band") == "fake":
         raise HTTPException(400, "Difference needs real frames")
     try:
-        ba = irsa.download_fits(irsa.cutout_url(ea, ra, dec, fov))
-        bb = irsa.download_fits(irsa.cutout_url(eb, ra, dec, fov))
-        png = proc.difference_png(ba, bb, a=a)
+        ba = _fits_for_epoch(ea, ra, dec, fov)
+        bb = _fits_for_epoch(eb, ra, dec, fov)
+        png = proc.difference_png(ba, bb, a=float(a), mode=mode)
         return Response(png, media_type="image/png")
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(502, f"diff failed: {exc}") from exc
+
+
+@app.get("/api/subtract")
+def subtract(
+    id_a: str = Query(...),
+    id_b: str = Query(...),
+    ra: float = Query(DEFAULT_RA),
+    dec: float = Query(DEFAULT_DEC),
+    fov: float = Query(DEFAULT_FOV),
+    release: str = Query(None),
+    band: str = Query("all"),
+    mode: str = Query("sum"),
+    a: float = Query(0.1),
+    sigma_thresh: float = Query(3.0, gt=0, le=20),
+):
+    """Epoch A−B subtraction with SNR dipole anomalies (Faiyaz science port)."""
+    rel = release or RELEASE
+    ea = _get_epoch(ra, dec, fov, rel, band, id_a)
+    eb = _get_epoch(ra, dec, fov, rel, band, id_b)
+    if ea.get("band") == "fake" or eb.get("band") == "fake":
+        raise HTTPException(400, "Subtraction needs real frames")
+    try:
+        ba = _fits_for_epoch(ea, ra, dec, fov)
+        bb = _fits_for_epoch(eb, ra, dec, fov)
+        result = anom.subtract_fits_bytes(
+            ba,
+            bb,
+            mode=mode,
+            sigma_thresh=float(sigma_thresh),
+            stretch_a=float(a),
+        )
+        mjd_a = float(ea.get("mjd") or 0)
+        mjd_b = float(eb.get("mjd") or 0)
+        return {
+            "status": "success",
+            "epoch_a": {"id": str(ea.get("id")), "mjd": mjd_a, "band": ea.get("band")},
+            "epoch_b": {"id": str(eb.get("id")), "mjd": mjd_b, "band": eb.get("band")},
+            "delta_mjd": round(abs(mjd_b - mjd_a), 4),
+            "grid_shape": result["grid_shape"],
+            "stats": result["stats"],
+            "anomalies_count": len(result["anomalies"]),
+            "anomalies": result["anomalies"],
+            "diff_png_url": anom.diff_png_url(
+                id_a=id_a,
+                id_b=id_b,
+                ra=ra,
+                dec=dec,
+                fov=fov,
+                band=band,
+                mode=mode,
+                a=float(a),
+            ),
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        log.exception("subtract failed")
+        raise HTTPException(502, f"subtract failed: {exc}") from exc
 
 
 @app.get("/api/gif")
@@ -351,7 +458,9 @@ def gif(
     flist = data.get("frames", [])[:max_frames]
     imgs = []
     for fr in flist:
-        resp = frame(obs_id=str(fr["id"]), ra=ra, dec=dec, fov=fov, release=rel, band=band)
+        resp = _render_frame_png(
+            str(fr["id"]), ra=ra, dec=dec, fov=fov, release=rel, band=band
+        )
         im = Image.open(io.BytesIO(resp.body)).convert("P")
         imgs.append(im)
     if not imgs:
@@ -403,18 +512,20 @@ def prepare(
     )
     jobmod.update_job(job_id, total=len(flist), progress=0)
 
+    stretch = float(a)
+
     def _work() -> None:
         for i, fr in enumerate(flist):
             try:
-                frame(
-                    obs_id=str(fr["id"]),
+                _render_frame_png(
+                    str(fr["id"]),
                     ra=ra,
                     dec=dec,
                     fov=fov,
                     release=rel,
                     band=band,
                     mode=mode,
-                    a=a,
+                    a=stretch,
                     invert=1,
                     align=1,
                     source="auto" if payload.get("source") == "real" else "fake",

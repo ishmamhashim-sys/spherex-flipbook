@@ -4,7 +4,6 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>SPHEREx Flipbook</title>
-  <link rel="stylesheet" href="https://aladin.cds.unistra.fr/AladinLite/api/v3/latest/aladin.min.css" />
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
@@ -47,6 +46,7 @@
     <label><input id="gaia" type="checkbox" /> Gaia DR3</label>
     <label><input id="wise" type="checkbox" /> WISE context</label>
     <label><input id="diffMode" type="checkbox" /> Diff A−B</label>
+    <label>Sigma <input id="sigma" type="number" min="1" max="10" step="0.5" value="3" /></label>
     <button id="gif" type="button">Export GIF</button>
     <select id="preset"></select>
   </section>
@@ -54,13 +54,33 @@
   <main class="layout">
     <div class="panel map-panel">
       <div id="aladin-lite-div"></div>
-      <div class="panel-label">Sky context (Aladin Lite)</div>
+      <div class="map-status" id="mapStatus">Loading sky map…</div>
+      <div class="panel-label">Sky context · finder chart (not the science blink)</div>
     </div>
     <div class="panel blink-panel" id="blinkPanel">
       <img id="view" alt="SPHEREx blink frame" />
       <div class="epoch-legend" id="legend"></div>
       <div id="info"></div>
       <div id="meta"></div>
+      <div id="anomPanel" class="anom-panel hidden">
+        <div class="anom-head">
+          <span id="anomCount">0 anomalies</span>
+          <span id="anomStats" class="anom-stats"></span>
+        </div>
+        <div class="anom-scroll">
+          <table class="anom-table">
+            <thead>
+              <tr>
+                <th>SNR</th>
+                <th>Type</th>
+                <th>RA</th>
+                <th>Dec</th>
+              </tr>
+            </thead>
+            <tbody id="anomBody"></tbody>
+          </table>
+        </div>
+      </div>
     </div>
   </main>
 
@@ -68,7 +88,13 @@
     Data via IRSA · Inspired by WiseView / Backyard Worlds · Cubes collapsed server-side · Cache = PNG thumbnails only
   </footer>
 
-  <script src="https://aladin.cds.unistra.fr/AladinLite/api/v3/latest/aladin.js" charset="utf-8"></script>
-  <script src="/app.js"></script>
+  <!-- npm aladin-lite ships ESM only; classic <script> never sets window.A -->
+  <script type="module">
+    import A from "/vendor/aladin.js";
+    window.A = A;
+    const s = document.createElement("script");
+    s.src = "/app.js";
+    document.body.appendChild(s);
+  </script>
 </body>
 </html>

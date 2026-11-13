@@ -116,7 +116,44 @@ button:hover { border-color: var(--accent); }
   min-height: 420px;
 }
 
-#aladin-lite-div { width: 100%; height: 100%; min-height: 420px; }
+/* Explicit height so Aladin's WebGL canvas gets a real pixel size.
+   height:100% alone fails when the parent only has min-height. */
+.map-panel {
+  height: 480px;
+  min-height: 480px;
+}
+
+#aladin-lite-div {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 480px;
+  background: #02040a;
+}
+
+#aladin-lite-div canvas {
+  display: block !important;
+}
+
+.map-status {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.9rem;
+  pointer-events: none;
+  z-index: 2;
+  background: rgba(8, 12, 24, 0.55);
+}
+
+.map-status.hidden {
+  display: none;
+}
 
 .panel-label {
   position: absolute;
@@ -125,6 +162,7 @@ button:hover { border-color: var(--accent); }
   font-size: 0.75rem;
   color: var(--muted);
   pointer-events: none;
+  z-index: 3;
 }
 
 .blink-panel {
@@ -164,6 +202,55 @@ button:hover { border-color: var(--accent); }
   font-size: 0.85rem;
   text-align: center;
 }
+
+#sigma { width: 64px; }
+
+.anom-panel {
+  width: min(100%, 520px);
+  margin-top: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.28);
+  overflow: hidden;
+}
+
+.anom-panel.hidden { display: none; }
+
+.anom-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.8rem;
+  color: var(--accent);
+}
+
+.anom-stats { color: var(--muted); font-size: 0.75rem; }
+
+.anom-scroll {
+  max-height: 160px;
+  overflow: auto;
+}
+
+.anom-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.75rem;
+  font-family: ui-monospace, Consolas, monospace;
+}
+
+.anom-table th,
+.anom-table td {
+  padding: 5px 8px;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+}
+
+.anom-table th { color: var(--muted); font-weight: 600; }
+.anom-table td { color: var(--ink); }
+.anom-table .pos { color: var(--accent); }
+.anom-table .neg { color: var(--danger); }
 
 footer {
   padding: 10px 22px 22px;

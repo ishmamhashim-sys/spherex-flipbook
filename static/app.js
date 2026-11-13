@@ -10,6 +10,11 @@
   let gaiaCat = null;
   let source = "unknown";
 
+  // Absolute HiPS URLs (IRSA mirrors). CDS IDs like "P/DSS2/color" fall back to
+  // relative paths on this origin when MocServer resolution fails → empty map.
+  const HIPS_DSS = "https://irsa.ipac.caltech.edu/data/hips/CDS/DSS2/color";
+  const HIPS_WISE = "https://skies.esac.esa.int/AllWISEColor";
+
   const params = () => {
     const q = new URLSearchParams({
       ra: $("ra").value,
@@ -21,6 +26,7 @@
       a: (Number($("stretch").value) / 100).toFixed(2),
       gaia: $("gaia").checked ? "1" : "0",
       diff: $("diffMode").checked ? "1" : "0",
+      sigma: $("sigma") ? $("sigma").value : "3",
     });
     return q;
   };
@@ -58,18 +64,86 @@
       .join("");
   }
 
+  function hideAnomalies() {
+    const panel = $("anomPanel");
+    if (panel) panel.classList.add("hidden");
+    const body = $("anomBody");
+    if (body) body.innerHTML = "";
+  }
+
+  function renderAnomalies(data) {
+    const panel = $("anomPanel");
+    if (!panel) return;
+    panel.classList.remove("hidden");
+    const n = data.anomalies_count || (data.anomalies || []).length;
+    $("anomCount").textContent = `${n} anomal${n === 1 ? "y" : "ies"}`;
+    const st = data.stats || {};
+    $("anomStats").textContent = st.std != null
+      ? `ΔMJD ${data.delta_mjd ?? "—"} · σ=${Number(st.std).toExponential(2)} · thresh ${st.sigma_threshold}σ`
+      : "";
+    const body = $("anomBody");
+    body.innerHTML = "";
+    const rows = data.anomalies || [];
+    if (!rows.length) {
+      body.innerHTML = '<tr><td colspan="4">No peaks above threshold</td></tr>';
+      return;
+    }
+    for (const row of rows.slice(0, 40)) {
+      const tr = document.createElement("tr");
+      const pos = String(row.type || "").includes("Positive");
+      tr.innerHTML = `
+        <td class="${pos ? "pos" : "neg"}">${row.snr > 0 ? "+" : ""}${Number(row.snr).toFixed(2)}σ</td>
+        <td>${pos ? "New/bright" : "Faded/moved"}</td>
+        <td>${Number(row.ra).toFixed(5)}</td>
+        <td>${Number(row.dec).toFixed(5)}</td>`;
+      body.appendChild(tr);
+    }
+  }
+
+  async function runSubtract() {
+    if (frames.length < 2) {
+      $("info").textContent = "Difference imaging needs at least 2 frames";
+      hideAnomalies();
+      if (imgs.length) $("view").src = imgs[idx].src;
+      return;
+    }
+    const idA = frames[0].id;
+    const idB = frames[1].id;
+    const sigma = $("sigma") ? $("sigma").value : "3";
+    $("info").textContent = `diff ${idA} − ${idB} · detecting anomalies…`;
+    updateLegend();
+    $("view").src = `/api/diff?id_a=${encodeURIComponent(idA)}&id_b=${encodeURIComponent(idB)}&${qs()}`;
+    try {
+      const url =
+        `/api/subtract?id_a=${encodeURIComponent(idA)}&id_b=${encodeURIComponent(idB)}` +
+        `&${qs()}&sigma_thresh=${encodeURIComponent(sigma)}`;
+      const data = await (await fetch(url)).json();
+      if (data.status !== "success") {
+        $("info").textContent = data.detail || "subtract failed";
+        hideAnomalies();
+        return;
+      }
+      $("info").textContent =
+        `diff ${idA} − ${idB} · ${data.anomalies_count} anomalies · ΔMJD ${data.delta_mjd}`;
+      renderAnomalies(data);
+      if (data.diff_png_url) $("view").src = data.diff_png_url;
+    } catch (e) {
+      console.warn("subtract failed", e);
+      $("info").textContent = `diff ${idA} − ${idB} · anomaly lookup failed`;
+      hideAnomalies();
+    }
+  }
+
   function showFrame() {
     if (!imgs.length) return;
-    if ($("diffMode").checked && frames.length >= 2) {
-      const a = frames[0].id;
-      const b = frames[Math.min(1, frames.length - 1)].id;
-      $("view").src = `/api/diff?id_a=${encodeURIComponent(a)}&id_b=${encodeURIComponent(b)}&${qs()}`;
-      $("info").textContent = `diff ${a} − ${b}`;
-    } else {
-      $("view").src = imgs[idx].src;
-      const fr = frames[idx];
-      $("info").textContent = `frame ${idx + 1}/${frames.length} · MJD ${Number(fr.mjd).toFixed(3)} · ${fr.band}`;
+    if ($("diffMode").checked) {
+      runSubtract();
+      return;
     }
+    hideAnomalies();
+    $("view").src = imgs[idx].src;
+    const fr = frames[idx];
+    $("info").textContent = `frame ${idx + 1}/${frames.length} · MJD ${Number(fr.mjd).toFixed(3)} · ${fr.band}`;
     updateLegend();
   }
 
@@ -102,13 +176,33 @@
     }
   }
 
+  function setMapStatus(text, hide) {
+    const el = $("mapStatus");
+    if (!el) return;
+    if (hide) {
+      el.classList.add("hidden");
+      return;
+    }
+    el.classList.remove("hidden");
+    el.textContent = text;
+  }
+
   function gotoAladin() {
     if (!aladin) return;
     const ra = Number($("ra").value);
     const dec = Number($("dec").value);
     const fov = Number($("fov").value);
-    aladin.gotoRaDec(ra, dec);
-    aladin.setFov(Math.max(fov * 3, 0.2));
+    try {
+      aladin.gotoRaDec(ra, dec);
+      aladin.setFov(Math.max(fov * 4, 0.35));
+      // Nudge a redraw after layout / async tile fetch
+      if (aladin.view && typeof aladin.view.requestRedraw === "function") {
+        aladin.view.requestRedraw();
+      }
+      window.dispatchEvent(new Event("resize"));
+    } catch (e) {
+      console.warn("gotoAladin failed", e);
+    }
   }
 
   async function toggleGaia() {
@@ -153,6 +247,7 @@
     $("info").textContent = "Querying IRSA…";
     setBadge("unknown");
     clearInterval(timer);
+    hideAnomalies();
     imgs = [];
     frames = [];
     idx = 0;
@@ -226,28 +321,59 @@
   }
 
   function initAladin() {
-    if (!window.A) return;
-    A.init.then(() => {
-      aladin = A.aladin("#aladin-lite-div", {
-        survey: "P/DSS2/color",
-        fov: 0.5,
-        target: `${$("ra").value} ${$("dec").value}`,
-        showCooGrid: false,
-        showProjectionControl: false,
-        showFullscreenControl: true,
+    setMapStatus("Loading sky map…", false);
+    if (!window.A || !A.init) {
+      setMapStatus("Sky map library failed to load. Blink panel still works.", false);
+      return;
+    }
+    const ra = Number($("ra").value);
+    const dec = Number($("dec").value);
+    A.init
+      .then(() => {
+        // Give the panel a real laid-out size before creating the WebGL view
+        const host = $("aladin-lite-div");
+        if (host && host.clientHeight < 100) {
+          host.style.height = "480px";
+        }
+        aladin = A.aladin("#aladin-lite-div", {
+          survey: HIPS_DSS,
+          fov: 0.75,
+          target: `${ra} ${dec}`,
+          cooFrame: "ICRSd",
+          showCooGrid: false,
+          showProjectionControl: false,
+          showFullscreenControl: true,
+          showLayersControl: false,
+          showGotoControl: false,
+          showFrame: false,
+          reticleColor: "#3dd6c6",
+          reticleSize: 22,
+        });
+        setMapStatus("", true);
+        // Second-pass goto after tiles start; helps empty-first-paint cases
+        setTimeout(() => {
+          gotoAladin();
+          setMapStatus("", true);
+        }, 400);
+      })
+      .catch((err) => {
+        console.warn("Aladin init failed", err);
+        setMapStatus(
+          "Sky map unavailable (network/CDN). Use the blink panel on the right for science.",
+          false
+        );
       });
-    });
   }
 
   function toggleWise() {
     if (!aladin) return;
     try {
       if ($("wise").checked) {
-        // AllWISE / unWISE-style infrared context when available in HiPS
-        aladin.setImageSurvey("P/allWISE/color");
+        aladin.setImageSurvey(HIPS_WISE);
       } else {
-        aladin.setImageSurvey("P/DSS2/color");
+        aladin.setImageSurvey(HIPS_DSS);
       }
+      setTimeout(gotoAladin, 200);
     } catch (e) {
       console.warn("WISE survey switch failed", e);
       $("meta").textContent = "WISE HiPS unavailable; keeping DSS";
@@ -269,9 +395,18 @@
   $("wise").onchange = toggleWise;
   $("diffMode").onchange = () => {
     clearInterval(timer);
+    if ($("diffMode").checked && frames.length < 2) {
+      $("info").textContent = "Difference imaging needs at least 2 frames";
+      hideAnomalies();
+    }
     showFrame();
     if (!$("diffMode").checked && playing) play();
   };
+  if ($("sigma")) {
+    $("sigma").onchange = () => {
+      if ($("diffMode").checked) runSubtract();
+    };
+  }
   $("gif").onclick = () => {
     window.open(`/api/gif?${qs()}&speed=${$("speed").value}`, "_blank");
   };
@@ -293,8 +428,10 @@
   if (q.get("gaia") === "1") $("gaia").checked = true;
   if (q.get("diff") === "1") $("diffMode").checked = true;
   if (q.has("a")) $("stretch").value = String(Math.round(Number(q.get("a")) * 100));
+  if (q.has("sigma") && $("sigma")) $("sigma").value = q.get("sigma");
 
   initAladin();
   loadPresets();
-  if (q.has("ra") || true) load();
+  // Always load: form fields already hold defaults (WISE 0855) or URL overrides.
+  load();
 })();

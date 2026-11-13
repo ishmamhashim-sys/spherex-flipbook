@@ -12,6 +12,28 @@ from app.config import IRSA_TAP, RELEASE, RELEASE_COLLECTIONS
 
 log = logging.getLogger(__name__)
 
+# Whitelist only — never interpolate raw client bandpass into ADQL.
+VALID_BANDPASSES = frozenset(
+    {
+        "SPHEREx-D1",
+        "SPHEREx-D2",
+        "SPHEREx-D3",
+        "SPHEREx-D4",
+        "SPHEREx-D5",
+        "SPHEREx-D6",
+    }
+)
+
+
+def _safe_bandpass(bandpass: str | None) -> str | None:
+    """Return a whitelisted bandpass name, or None for no band filter."""
+    if not bandpass or bandpass in ("all", "broadband"):
+        return None
+    if bandpass not in VALID_BANDPASSES:
+        log.warning("ignoring invalid bandpass %r", bandpass)
+        return None
+    return bandpass
+
 
 def _tap_sync(query: str, timeout: int = 180) -> str:
     r = requests.get(
@@ -83,9 +105,8 @@ def _dedupe(epochs: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _find_via_artifact(
     ra: float, dec: float, fov: float, bandpass: str | None
 ) -> list[dict[str, Any]]:
-    band_clause = ""
-    if bandpass and bandpass not in ("all", "broadband"):
-        band_clause = f"AND p.energy_bandpassname = '{bandpass}'"
+    safe = _safe_bandpass(bandpass)
+    band_clause = f"AND p.energy_bandpassname = '{safe}'" if safe else ""
     # Note: IRSA tutorials use `{dec}d` unit suffix on Dec in the center param.
     query = f"""
 SELECT TOP 60
@@ -133,9 +154,8 @@ ORDER BY p.time_bounds_lower
 def _find_via_obscore(
     ra: float, dec: float, fov: float, bandpass: str | None
 ) -> list[dict[str, Any]]:
-    band_clause = ""
-    if bandpass and bandpass not in ("all", "broadband"):
-        band_clause = f"AND energy_bandpassname = '{bandpass}'"
+    safe = _safe_bandpass(bandpass)
+    band_clause = f"AND energy_bandpassname = '{safe}'" if safe else ""
     query = f"""
 SELECT TOP 40 obs_id, obs_collection, t_min, access_url, energy_bandpassname
 FROM spherex.obscore
@@ -216,7 +236,8 @@ def _find_via_sia2(
                 if "energy_bandpassname" in table.colnames
                 else "unknown"
             )
-            if bandpass and bandpass not in ("all", "broadband") and band != bandpass:
+            safe = _safe_bandpass(bandpass)
+            if safe and band != safe:
                 continue
             if "ibe/data" in access and "center=" not in access:
                 sep = "&" if "?" in access else "?"
